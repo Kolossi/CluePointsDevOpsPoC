@@ -1,0 +1,44 @@
+# Kubernetes credentials — never commit
+kubeconfig.yaml
+kubeconfig.yml
+*.kubeconfig
+
+# Terraform working directories (downloaded providers / modules)
+**/.terraform/
+
+# Terraform state files — managed remotely in CI; never commit local state
+*.tfstate
+*.tfstate.backup
+
+# Terraform plan output files
+*.tfplan
+
+# Terraform local backend override (example file is committed; actual override is not)
+override.tf
+backend-override.tf
+
+# Terraform crash log
+crash.log
+
+# Terraform variable files that may contain secrets
+*.auto.tfvars
+# terraform.tfvars is committed (contains non-secret env config); secrets go in CI variables
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python (if running scripts locally)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Docker build cache artifacts
+.dockerignore.local

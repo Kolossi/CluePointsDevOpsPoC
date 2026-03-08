@@ -1,0 +1,235 @@
+# =============================================================================
+# Reusable GitHub Actions pipeline — CluePoints DevOps PoC
+#
+# Call this from your application repo's .github/workflows/ci.yml:
+#
+#   jobs:
+#     pipeline:
+#       uses: <github-org>/CluePointsDevOpsPoC/.github/workflows/pipeline.yml@main
+#       with:
+#         APP_VERSION_MAJOR: "1"
+#         APP_VERSION_MINOR: "0"
+#         INGRESS_BASE_DOMAIN: "example.com"
+#       secrets: inherit
+#
+# Required GitHub Actions secrets (set on the app repo):
+#   DOCKER_HUB_TOKEN          — Docker Hub access token (protected)
+#   KUBECONFIG_DATA           — base64-encoded kubeconfig: base64 -w0 kubeconfig.yaml (optional: deploy jobs skipped if absent)
+#   TF_TOKEN_app_terraform_io — Terraform Cloud API token (optional: deploy jobs skipped if absent)
+#
+# Required GitHub Actions variables (set on the app repo):
+#   DOCKER_HUB_USERNAME       — Docker Hub account name
+#   INGRESS_BASE_DOMAIN       — passed as workflow input (e.g. example.com)
+#
+# Approval gate for prod:
+#   In the app repo, go to Settings → Environments → prod → Protection rules
+#   and add Required reviewers. The deploy-prod job will pause until approved.
+# =============================================================================
+
+name: App Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      APP_VERSION_MAJOR:
+        description: "Semantic version MAJOR component"
+        type: string
+        default: "1"
+      APP_VERSION_MINOR:
+        description: "Semantic version MINOR component"
+        type: string
+        default: "0"
+      INGRESS_BASE_DOMAIN:
+        description: "Base domain for ingress hostnames (e.g. example.com)"
+        type: string
+        required: false
+        default: ""
+      DOCKER_HUB_USERNAME:
+        description: "Docker Hub account name (repository variable)"
+        type: string
+        required: true
+    secrets:
+      DOCKER_HUB_TOKEN:
+        required: true
+      KUBECONFIG_DATA:
+        required: false
+      TF_TOKEN_app_terraform_io:
+        required: false
+
+# ---------------------------------------------------------------------------
+# Stage: build
+# ---------------------------------------------------------------------------
+jobs:
+  build-image:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to push the version git tag
+    env:
+      APP_VERSION: "${{ inputs.APP_VERSION_MAJOR }}.${{ inputs.APP_VERSION_MINOR }}.${{ github.run_number }}"
+
+    steps:
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+
+      - name: Checkout platform repo (for Dockerfile)
+        uses: actions/checkout@v4
+        with:
+          repository: "${{ github.repository_owner }}/CluePointsDevOpsPoC"
+          ref: main
+          path: platform-repo
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ inputs.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: platform-repo/Dockerfile
+          push: true
+          build-args: BUILD_VERSION=${{ env.APP_VERSION }}
+          tags: |
+            docker.io/${{ inputs.DOCKER_HUB_USERNAME }}/${{ github.event.repository.name }}:${{ env.APP_VERSION }}
+
+      - name: Create and push version git tag
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git tag "v${{ env.APP_VERSION }}"
+          git push origin "v${{ env.APP_VERSION }}"
+
+  # ---------------------------------------------------------------------------
+  # Stage: test  (placeholder — replace run step with real test invocation)
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unit tests
+        run: |
+          echo "TODO — replace with: pip install -r requirements.txt && pytest"
+
+  # ---------------------------------------------------------------------------
+  # Stage: security  (placeholder — replace with Trivy / code-scanning)
+  # ---------------------------------------------------------------------------
+  security-scan:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run security scan
+        run: |
+          echo "TODO — replace with: trivy image docker.io/${{ inputs.DOCKER_HUB_USERNAME }}/${{ github.event.repository.name }}"
+
+  # ---------------------------------------------------------------------------
+  # Stage: deploy-dev  (automatic on main)
+  # ---------------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to dev
+    needs: [build-image]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: "http://helloworld-dev.${{ inputs.INGRESS_BASE_DOMAIN }}/"
+    env:
+      APP_VERSION: "${{ inputs.APP_VERSION_MAJOR }}.${{ inputs.APP_VERSION_MINOR }}.${{ github.run_number }}"
+      TF_TOKEN_app_terraform_io: ${{ secrets.TF_TOKEN_app_terraform_io }}
+      TF_VAR_ingress_base_domain: ${{ inputs.INGRESS_BASE_DOMAIN }}
+
+    steps:
+      - name: Checkout platform repo
+        uses: actions/checkout@v4
+        with:
+          repository: "${{ github.repository_owner }}/CluePointsDevOpsPoC"
+          ref: main
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Write kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/environments/dev init
+
+      - name: Terraform apply
+        run: |
+          terraform -chdir=terraform/environments/dev apply \
+            -auto-approve \
+            -var "image=docker.io/${{ inputs.DOCKER_HUB_USERNAME }}/${{ github.event.repository.name }}:${{ env.APP_VERSION }}"
+
+  # ---------------------------------------------------------------------------
+  # Stage: smoke-test  (placeholder — replace with real health check)
+  # ---------------------------------------------------------------------------
+  smoke-test-dev:
+    name: Smoke test (dev)
+    needs: [deploy-dev]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Smoke test
+        run: |
+          echo "TODO — replace with: curl -sf http://helloworld-dev.${{ inputs.INGRESS_BASE_DOMAIN }}/"
+
+  # ---------------------------------------------------------------------------
+  # Stage: deploy-prod  (manual approval gate)
+  #
+  # Configure the "prod" environment in the app repo:
+  #   Settings → Environments → prod → Protection rules → Required reviewers
+  # The workflow pauses here until an authorised reviewer approves.
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to prod
+    needs: [build-image, smoke-test-dev]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: prod
+      url: "http://helloworld-prod.${{ inputs.INGRESS_BASE_DOMAIN }}/"
+    env:
+      APP_VERSION: "${{ inputs.APP_VERSION_MAJOR }}.${{ inputs.APP_VERSION_MINOR }}.${{ github.run_number }}"
+      TF_TOKEN_app_terraform_io: ${{ secrets.TF_TOKEN_app_terraform_io }}
+      TF_VAR_ingress_base_domain: ${{ inputs.INGRESS_BASE_DOMAIN }}
+
+    steps:
+      - name: Checkout platform repo
+        uses: actions/checkout@v4
+        with:
+          repository: "${{ github.repository_owner }}/CluePointsDevOpsPoC"
+          ref: main
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Write kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/environments/prod init
+
+      - name: Terraform apply
+        run: |
+          terraform -chdir=terraform/environments/prod apply \
+            -auto-approve \
+            -var "image=docker.io/${{ inputs.DOCKER_HUB_USERNAME }}/${{ github.event.repository.name }}:${{ env.APP_VERSION }}"

@@ -1,0 +1,83 @@
+# =============================================================================
+# Platform repo self-validation workflow
+#
+# Runs on every push and pull request to keep the platform code clean.
+# Does NOT deploy anything — this repo owns templates and Terraform only.
+# =============================================================================
+
+name: Platform CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Terraform format check — fails if any .tf file is not canonical fmt
+  # ---------------------------------------------------------------------------
+  terraform-fmt:
+    name: Terraform fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive terraform/
+
+  # ---------------------------------------------------------------------------
+  # YAML lint — checks workflow files are valid YAML
+  # ---------------------------------------------------------------------------
+  yaml-lint:
+    name: YAML lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install --quiet yamllint
+
+      - name: Lint workflow YAML files
+        run: yamllint -d relaxed .github/workflows/
+
+  # ---------------------------------------------------------------------------
+  # Terraform validate — dev environment
+  # Runs with -backend=false so no state backend credentials are required.
+  # ---------------------------------------------------------------------------
+  terraform-validate-dev:
+    name: Terraform validate (dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Terraform init (no backend)
+        run: terraform -chdir=terraform/environments/dev init -backend=false
+
+      - name: Terraform validate
+        run: terraform -chdir=terraform/environments/dev validate
+
+  # ---------------------------------------------------------------------------
+  # Terraform validate — prod environment
+  # ---------------------------------------------------------------------------
+  terraform-validate-prod:
+    name: Terraform validate (prod)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Terraform init (no backend)
+        run: terraform -chdir=terraform/environments/prod init -backend=false
+
+      - name: Terraform validate
+        run: terraform -chdir=terraform/environments/prod validate

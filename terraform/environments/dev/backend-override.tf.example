@@ -1,0 +1,10 @@
+# NOTE: Terraform does not allow a backend "local" block to override a cloud {}
+# block — they are incompatible block types. This file cannot be used to bypass
+# Terraform Cloud for local applies.
+#
+# To run terraform plan/apply locally, set TF_TOKEN_app_terraform_io to a valid
+# Terraform Cloud API token and run terraform init + plan/apply normally.
+#
+# For syntax validation only (no state), use:
+#   terraform init -backend=false
+#   terraform validate
